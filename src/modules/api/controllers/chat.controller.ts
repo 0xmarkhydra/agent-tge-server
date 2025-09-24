@@ -114,6 +114,7 @@ export class ChatController {
   }
 
   @Post('stream')
+  @Sse()
   @ApiOperation({
     summary: 'Send chat message with streaming response',
     description: 'Process a chat message and return AI response with real-time streaming',
@@ -130,7 +131,6 @@ export class ChatController {
     status: HttpStatus.INTERNAL_SERVER_ERROR,
     description: 'Internal server error',
   })
-  @Sse('stream')
   async streamMessage(@Body() chatRequest: ChatRequestDto): Promise<Observable<{ data: string }>> {
     console.log('🔄 [ChatController] [streamMessage] [request]:', chatRequest);
     
