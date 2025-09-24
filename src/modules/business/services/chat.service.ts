@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Observable, Observer } from 'rxjs';
 import { ChatHistoryRepository } from '../../database/repositories/chat-history.repository';
 import { ChatRequestDto } from '../../api/dtos/chat.dto';
 import { OpenAIService } from './openai.service';
@@ -217,6 +218,176 @@ Context: You are part of a chat widget system that helps users understand differ
         }
       }, 30000); // 30 second timeout
     });
+  }
+
+  async processChatStream(chatRequest: ChatRequestDto, observer: Observer<{ data: string }>): Promise<void> {
+    this.logger.log(`[🔄] [ChatService] [processChatStream] [request]:`, chatRequest);
+
+    try {
+      const startTime = Date.now();
+      
+      // Get chat history for context
+      const chatHistory = await this.chatHistoryRepository.getChatHistory(
+        chatRequest.user_id, 
+        chatRequest.token_slug, 
+        10 // Last 10 messages for context
+      );
+      
+      // Get real token data from PretgeMarket APIs
+      const { tokenData, projectData } = await this.pretgeApiService.getTokenInfo(chatRequest.token_slug);
+      
+      // Build context-aware prompt with real data
+      const systemPrompt = this.buildSystemPrompt(chatRequest.token_slug, tokenData, projectData);
+      const contextualQuestion = this.buildContextualQuestion(
+        chatRequest.question, 
+        chatRequest.token_slug, 
+        chatHistory
+      );
+      
+      // Send initial metadata
+      observer.next({
+        data: JSON.stringify({
+          type: 'metadata',
+          data: {
+            token_slug: chatRequest.token_slug,
+            has_token_data: !!tokenData,
+            has_project_data: !!projectData,
+            context_messages: chatHistory.length,
+          }
+        })
+      });
+
+      // Stream AI response
+      let completeResponse = '';
+      const subscription = this.openAIService.streamCompletion(contextualQuestion, systemPrompt).subscribe({
+        next: (chunk: string) => {
+          completeResponse += chunk;
+          observer.next({
+            data: JSON.stringify({
+              type: 'chunk',
+              data: chunk
+            })
+          });
+        },
+        complete: async () => {
+          const processingTime = (Date.now() - startTime) / 1000;
+          
+          try {
+            // Save to chat history
+            const chatMessages = await this.chatHistoryRepository.saveChatMessage(
+              chatRequest.user_id,
+              chatRequest.token_slug,
+              chatRequest.question,
+              completeResponse.trim(),
+              {
+                processing_time: processingTime,
+                model_used: 'gpt-4o',
+                timestamp: new Date().toISOString(),
+                context_messages: chatHistory.length,
+                has_token_data: !!tokenData,
+                has_project_data: !!projectData,
+                api_calls: {
+                  pretge_token_api: !!tokenData,
+                  pretge_project_api: !!projectData,
+                },
+              },
+              [
+                {
+                  source: `https://docs.${chatRequest.token_slug}.to/docs`,
+                  title: `${chatRequest.token_slug.toUpperCase()} Documentation`,
+                  relevance_score: 0.95
+                }
+              ]
+            );
+
+            const aiMessage = chatMessages[1];
+
+            // Send completion signal
+            observer.next({
+              data: JSON.stringify({
+                type: 'complete',
+                data: {
+                  message_id: aiMessage.id,
+                  processing_time: processingTime,
+                  citations: [
+                    {
+                      source: `https://docs.${chatRequest.token_slug}.to/docs`,
+                      title: `${chatRequest.token_slug.toUpperCase()} Documentation`,
+                      relevance_score: 0.95
+                    }
+                  ]
+                }
+              })
+            });
+
+            observer.complete();
+          } catch (error) {
+            this.logger.error(`[🔴] [ChatService] [processChatStream] [save_error]:`, error);
+            observer.error(error);
+          }
+        },
+        error: (error) => {
+          this.logger.error(`[🔴] [ChatService] [processChatStream] [stream_error]:`, error);
+          
+          // Send fallback response
+          const fallbackAnswer = this.generateMockAnswer(chatRequest.question, chatRequest.token_slug);
+          
+          // Stream fallback response word by word
+          this.streamFallbackResponse(fallbackAnswer, observer, chatRequest);
+        }
+      });
+      
+      // Set timeout for safety
+      setTimeout(() => {
+        if (!subscription.closed) {
+          subscription.unsubscribe();
+          const fallbackAnswer = this.generateMockAnswer(chatRequest.question, chatRequest.token_slug);
+          this.streamFallbackResponse(fallbackAnswer, observer, chatRequest);
+        }
+      }, 30000); // 30 second timeout
+
+    } catch (error) {
+      this.logger.error(`[🔴] [ChatService] [processChatStream] [error]:`, error);
+      
+      // Send fallback response
+      const fallbackAnswer = this.generateMockAnswer(chatRequest.question, chatRequest.token_slug);
+      this.streamFallbackResponse(fallbackAnswer, observer, chatRequest);
+    }
+  }
+
+  private streamFallbackResponse(answer: string, observer: Observer<{ data: string }>, chatRequest: ChatRequestDto): void {
+    const words = answer.split(' ');
+    let currentIndex = 0;
+
+    const streamInterval = setInterval(() => {
+      if (currentIndex < words.length) {
+        const word = words[currentIndex] + (currentIndex < words.length - 1 ? ' ' : '');
+        observer.next({
+          data: JSON.stringify({
+            type: 'chunk',
+            data: word
+          })
+        });
+        currentIndex++;
+      } else {
+        clearInterval(streamInterval);
+        
+        // Send completion signal for fallback
+        observer.next({
+          data: JSON.stringify({
+            type: 'complete',
+            data: {
+              message_id: null,
+              processing_time: 0.1,
+              citations: [],
+              is_fallback: true
+            }
+          })
+        });
+        
+        observer.complete();
+      }
+    }, 50); // 50ms delay between words
   }
 
   private generateMockAnswer(question: string, tokenSlug: string): string {

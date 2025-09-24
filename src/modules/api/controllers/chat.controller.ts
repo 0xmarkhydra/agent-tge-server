@@ -1,5 +1,7 @@
-import { Controller, Post, Get, Body, Param, Query, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, Query, HttpStatus, Res, Sse } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
+import { Response } from 'express';
+import { Observable } from 'rxjs';
 import { ChatService } from '../../business/services/chat.service';
 import { ChatRequestDto, ChatResponseDto, ChatHistoryRequestDto, ChatHistoryResponseDto } from '../dtos/chat.dto';
 
@@ -109,5 +111,35 @@ export class ChatController {
         timestamp: new Date().toISOString(),
       };
     }
+  }
+
+  @Post('stream')
+  @ApiOperation({
+    summary: 'Send chat message with streaming response',
+    description: 'Process a chat message and return AI response with real-time streaming',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Streaming chat response',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Invalid request data',
+  })
+  @ApiResponse({
+    status: HttpStatus.INTERNAL_SERVER_ERROR,
+    description: 'Internal server error',
+  })
+  @Sse('stream')
+  async streamMessage(@Body() chatRequest: ChatRequestDto): Promise<Observable<{ data: string }>> {
+    console.log('🔄 [ChatController] [streamMessage] [request]:', chatRequest);
+    
+    return new Observable(observer => {
+      this.chatService.processChatStream(chatRequest, observer)
+        .catch(error => {
+          console.error('🔴 [ChatController] [streamMessage] [error]:', error);
+          observer.error(error);
+        });
+    });
   }
 }
