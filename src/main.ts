@@ -7,7 +7,7 @@ import { Logger as PinoLogger } from 'nestjs-pino';
 
 const isApi = Boolean(Number(process.env.IS_API || 0));
 
-const PORT = process.env.PORT || '3000';
+const PORT = process.env.PORT || '3001';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     // logger: false,

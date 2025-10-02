@@ -4,6 +4,7 @@ import { ChatHistoryRepository } from '../../database/repositories/chat-history.
 import { ChatRequestDto } from '../../api/dtos/chat.dto';
 import { OpenAIService } from './openai.service';
 import { PretgeApiService } from './pretge-api.service';
+import MOCK_DATA from 'modules/mocks/data';
 
 @Injectable()
 export class ChatService {
@@ -156,6 +157,21 @@ export class ChatService {
     // Get real token information
     const realTokenInfo = this.pretgeApiService.formatTokenInfoForPrompt(tokenData, projectData);
     
+    // Get mock data as fallback
+    const mockData = MOCK_DATA[tokenSlug];
+    const mockInfo = mockData ? `
+**Mock Token Information (for reference):**
+- **Name:** ${mockData.name}
+- **Description:** ${mockData.description}
+- **Symbol:** ${mockData.slug}
+- **Website:** ${mockData.website}
+- **Twitter:** ${mockData.twitter}
+- **Telegram:** ${mockData.telegram}
+
+**Detailed Information:**
+${mockData.content}
+` : '';
+    
     return `You are an expert AI assistant specialized in providing accurate and helpful information about cryptocurrency tokens and blockchain projects. 
 
 You are currently helping users with questions about ${tokenUpper} (${tokenSlug}) token. 
@@ -163,18 +179,21 @@ You are currently helping users with questions about ${tokenUpper} (${tokenSlug}
 **Current Token Information:**
 ${realTokenInfo}
 
+${mockInfo}
+
 Guidelines:
 1. Use the provided token information above to give accurate, up-to-date answers
-2. Be helpful and educational in your responses
-3. If you don't know specific details not covered in the provided information, be honest about it
-4. Focus on the token's technology, use cases, tokenomics, funding, and current status
-5. Always remind users to do their own research (DYOR)
-6. Be concise but comprehensive in your answers
-7. If asked about price predictions, explain that you cannot provide financial advice
-8. Reference specific data from the provided information when relevant
-9. IMPORTANT: Always respond using markdown formatting for better readability. Use headers (##, ###), bold text (**text**), bullet points (-), code blocks (\`\`\`), and other markdown elements to structure your responses clearly.
+2. If real-time data is not available, use the mock reference information provided
+3. Be helpful and educational in your responses
+4. If you don't know specific details not covered in the provided information, be honest about it
+5. Focus on the token's technology, use cases, tokenomics, funding, and current status
+6. Always remind users to do their own research (DYOR)
+7. Be concise but comprehensive in your answers
+8. If asked about price predictions, explain that you cannot provide financial advice
+9. Reference specific data from the provided information when relevant
+10. IMPORTANT: Always respond using markdown formatting for better readability. Use headers (##, ###), bold text (**text**), bullet points (-), code blocks (\`\`\`), and other markdown elements to structure your responses clearly.
 
-Context: You are part of a chat widget system that helps users understand different cryptocurrency tokens. The information above is real-time data from PretgeMarket APIs.`;
+Context: You are part of a chat widget system that helps users understand different cryptocurrency tokens. The information above includes real-time data from PretgeMarket APIs and reference information from our knowledge base.`;
   }
 
   private buildContextualQuestion(
@@ -236,8 +255,7 @@ Context: You are part of a chat widget system that helps users understand differ
       
       // Get real token data from PretgeMarket APIs
       const { tokenData, projectData } = await this.pretgeApiService.getTokenInfo(chatRequest.token_slug);
-      
-      // Build context-aware prompt with real data
+
       const systemPrompt = this.buildSystemPrompt(chatRequest.token_slug, tokenData, projectData);
       const contextualQuestion = this.buildContextualQuestion(
         chatRequest.question, 
